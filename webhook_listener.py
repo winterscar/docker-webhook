@@ -1,12 +1,13 @@
 import hmac
 import logging
-from json import dumps
+from json import dumps, dump
 from os import X_OK, access, getenv, listdir
 from os.path import join
 from pathlib import Path
 from subprocess import PIPE, Popen
 from sys import stderr, exit
 from traceback import print_exc
+from threading import Thread
 
 from flask import Flask, abort, request
 
@@ -103,7 +104,8 @@ def index():
 
     # Try to parse out the branch from the request payload
     try:
-        branch = request.get_json(force=True)["ref"].split("/", 2)[2]
+        payload = request.get_json(force=True)
+        branch = payload["ref"].split("/", 2)[2]
     except:
         print_exc()
         logging.info("Parsing payload failed")
@@ -114,25 +116,31 @@ def index():
         logging.info("Branch %s not in branch_whitelist %s",
                      branch, branch_whitelist)
         abort(403)
-    
+
     # Run scripts, saving into responses (which we clear out)
     responses = {}
-    for script in scripts:
-        proc = Popen([script, branch], stdout=PIPE, stderr=PIPE)
-        stdout, stderr = proc.communicate()
-        stdout = stdout.decode('utf-8')
-        stderr = stderr.decode('utf-8')
 
-        # Log errors if a hook failed
-        if proc.returncode != 0:
-            logging.error('[%s]: %d\n%s', script, proc.returncode, stderr)
-        
-        responses[script] = {
-            'stdout': stdout,
-            'stderr': stderr
-        }
+    # Run scripts asyncronously
+    def run_scripts():
+        for script in scripts:
+            proc = Popen([script, dumps(payload)], stdout=PIPE, stderr=PIPE)
+            stdout, stderr = proc.communicate()
+            stdout = stdout.decode('utf-8')
+            stderr = stderr.decode('utf-8')
 
-    return dumps(responses)
+            # Log errors if a hook failed
+            if proc.returncode != 0:
+                logging.error('[%s]: %d\n%s', script, proc.returncode, stderr)
+            
+            responses[script] = {
+                'stdout': stdout,
+                'stderr': stderr
+            }
+
+    thread = Thread(target=run_scripts)
+    thread.start()
+
+    return dumps({"status": "running-scripts"})
 
 @application.route('/logs', methods=['GET'])
 def logs():

@@ -1,4 +1,4 @@
 #!/bin/bash
 
-echo "Webhook received for branch '$1'"
+echo "Webhook received with payload '$1'"
 exit 0
